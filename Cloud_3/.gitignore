@@ -1,0 +1,5 @@
+# Ignora o arquivo .json da pasta keys
+keys/*.json
+
+# Ignora o arquivo .env na raiz
+.env

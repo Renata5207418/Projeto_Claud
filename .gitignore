@@ -1,0 +1,29 @@
+# ⚠️ Segredos / credenciais
+*.env
+**/*.env
+*.json                 
+**/keys/
+*.db
+
+# Diretórios locais (downloads, perfis, ambientes)
+.venv/
+env/
+.chrome_profile/
+downloads/
+baixados/
+separados/
+
+# Node / Python artefatos
+node_modules/
+__pycache__/
+*.pyc
+
+# IDEs / editors
+.idea/
+.vscode/
+
+# Outros temporários
+*.log
+*.bak
+*.rar
+*.zip
