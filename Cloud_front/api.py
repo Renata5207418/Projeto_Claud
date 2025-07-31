@@ -79,7 +79,9 @@ def export_report(month: str = Query(..., regex=r"^\d{4}\-\d{2}$")):
                 "assunto",
                 "descricao",
                 "created_at",
-                "lido"
+                "lido",
+                "updated_at",
+                "last_try"
             ])
         )
 
@@ -88,6 +90,15 @@ def export_report(month: str = Query(..., regex=r"^\d{4}\-\d{2}$")):
             conn2,
             params=[month]
         )
+        if "pasta_cliente" in df_tri.columns:
+            df_tri["Copiado p/ Cliente"] = df_tri["pasta_cliente"].apply(
+                lambda x: "SIM" if isinstance(x, str) and x and "NÃO ENVIADO" not in x else "NÃO"
+            )
+
+        # AJUSTE: Remove colunas desnecessárias, incluindo "updated_at"
+        for col in ["pasta_cliente", "pubsub_ok", "updated_at"]:
+            if col in df_tri.columns:
+                df_tri = df_tri.drop(columns=[col])
 
         df_msg = pd.read_sql_query(
             """
@@ -106,23 +117,11 @@ def export_report(month: str = Query(..., regex=r"^\d{4}\-\d{2}$")):
         conn1.close()
         conn2.close()
 
-        # ── 2) Formata datas ───────────────────────────────────────────────────
-        for df, col in ((df_dl, "updated_at"), (df_tri, "updated_at")):
-            df[col] = (
-                pd.to_datetime(
-                    df[col],
-                    errors="coerce",
-                    infer_datetime_format=True
-                )
-                .dt.strftime("%d/%m/%Y %H:%M:%S")
-            )
-
-        # ── 3) Renomeia colunas de Downloads e Triagem ────────────────────────
+        # ── 2) Renomeia colunas de Downloads e Triagem ────────────────────────
         df_dl = df_dl.rename(columns={
             "os_id": "OS",
             "status": "Status Download",
             "tentativas": "Tentativas",
-            "updated_at": "Última Atualização",
             "apelido": "Empresa",
             "anexos_total": "Total Anexos"
         })
@@ -132,13 +131,8 @@ def export_report(month: str = Query(..., regex=r"^\d{4}\-\d{2}$")):
             "triagem_status": "Status Triagem",
             "tomados_status": "Status Tomados",
             "gerou_tomados": "Gerou Tomados",
-            "gerou_extrato": "Gerou Extrato",
-            "updated_at": "Última Atualização",
-            "pasta_cliente": "Pasta Cliente"
+            "gerou_extrato": "Gerou Extrato"
         })
-        df_tri["Copiado p/ Cliente?"] = df_tri["Pasta Cliente"].apply(
-            lambda x: "SIM" if isinstance(x, str) and x and "NÃO ENVIADO" not in x else "NÃO"
-        )
 
         # ── 4) Gera o Excel com styling ───────────────────────────────────────
         output = io.BytesIO()
@@ -153,29 +147,43 @@ def export_report(month: str = Query(..., regex=r"^\d{4}\-\d{2}$")):
             ws_msg = writer.sheets["Mensagens"]
 
             header_fmt = wb.add_format({
-                "bold":     True,
-                "bg_color": "#F1C40F",
-                "font_color": "#000000",
-                "border": 1
+                "bold": True, "bg_color": "#fbba00", "font_color": "#FFFFFF",
+                "border": 1, "align": "center", "valign": "vcenter"
             })
+            fmt_bom = wb.add_format({"bg_color": "#C6EFCE", "font_color": "#006100"})
+            fmt_ruim = wb.add_format({"bg_color": "#FFC7CE", "font_color": "#9C0006"})
 
+            # Aplica formatação condicional na aba "Triagem"
+            num_rows = len(df_tri)
+            if num_rows > 0:
+                for col_name, values in {
+                    "Gerou Tomados": ("SIM", "NÃO"),
+                    "Gerou Extrato": ("SIM", "NÃO"),
+                    "Copiado p/ Cliente": ("SIM", "NÃO"),
+                }.items():
+                    if col_name in df_tri.columns:
+                        col_idx = df_tri.columns.get_loc(col_name)
+                        ws_tri.conditional_format(1, col_idx, num_rows, col_idx,
+                                                  {"type": "cell", "criteria": "==", "value": f'"{values[0]}"',
+                                                   "format": fmt_bom})
+                        ws_tri.conditional_format(1, col_idx, num_rows, col_idx,
+                                                  {"type": "cell", "criteria": "==", "value": f'"{values[1]}"',
+                                                   "format": fmt_ruim})
+
+            # Aplica styling geral
             for ws, df in ((ws_dl, df_dl), (ws_tri, df_tri), (ws_msg, df_msg)):
                 ws.freeze_panes(1, 0)
-                ws.autofilter(0, 0, 0, len(df.columns)-1)
+                ws.autofilter(0, 0, len(df) - 1 if len(df) > 0 else 0, len(df.columns) - 1)
                 for idx, col in enumerate(df.columns):
                     ws.write(0, idx, col, header_fmt)
-                    max_len = max(df[col].astype(str).map(len).max(), len(col))
-                    ws.set_column(idx, idx, max_len + 2)
+                    max_len = max(df[col].astype(str).map(len).max(), len(col)) if len(df) > 0 else len(col)
+                    ws.set_column(idx, idx, max_len + 3)
 
         output.seek(0)
         return StreamingResponse(
             output,
-            media_type=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
-            headers={
-                "Content-Disposition": f"attachment; filename=relatorio_{month}.xlsx"
-            }
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=relatorio_{month}.xlsx"}
         )
 
     except Exception as e:
