@@ -1,4 +1,3 @@
-from selenium.common.exceptions import WebDriverException
 import time
 import json
 import shutil
@@ -11,7 +10,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from config.settings import settings
 from utils.logging_config import configure_logging
-from utils.helpers import espera_download, mover_arquivos, CSS
+from utils.helpers import espera_download, mover_arquivos, CSS, formatar_erro_usuario
 from scripts.login import run as do_login
 from db import db, message_queue
 
@@ -218,9 +217,7 @@ if __name__ == "__main__":
             loop_download()
         except Exception as e:
             log.exception("Falha inesperada no loop")
-            user_msg = (e.msg.split("Stacktrace:")[0].strip()
-                        if isinstance(e, WebDriverException) and getattr(e, "msg", None)
-                        else str(e).splitlines()[0])
+            user_msg = formatar_erro_usuario(e)
             beat(f"Erro: {user_msg}", status="error")
 
         time.sleep(settings.sleep_seconds)
