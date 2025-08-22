@@ -108,3 +108,15 @@ def claim_pendentes(limite: int = 20) -> list[int]:
             ids.append(row[0])
         c.commit()
     return ids
+
+
+def list_processando_stale(minutos: int = 30) -> list[tuple[int,str]]:
+    with db_conn() as c:
+        cur = c.execute("""
+            SELECT os_id, pasta
+              FROM os_triagem
+             WHERE tomados_status = 'Processando'
+               AND (updated_at IS NULL OR updated_at < datetime('now', ?))
+            ORDER BY updated_at
+        """, (f'-{minutos} minutes',))
+        return [(r[0], r[1]) for r in cur.fetchall()]

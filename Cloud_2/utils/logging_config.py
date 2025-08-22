@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from pathlib import Path
 
 
@@ -22,12 +23,19 @@ def configure_logging(name: str) -> logging.Logger:
          log = configure_logging("triagem_worker")
          log.info("Mensagem de log")
     """
-    log_dir = Path(__file__).resolve().parents[2] / "logs"
+    project_root = Path(__file__).resolve().parents[1]
+    log_dir = project_root / "logs"
     log_dir.mkdir(exist_ok=True)
+
+    now = datetime.now()
+    log_file = log_dir / f"{name}_{now.strftime('%Y-%m')}.log"
+
     logger = logging.getLogger(name)
+    if logger.hasHandlers():
+        logger.handlers.clear()
     logger.setLevel(logging.INFO)
 
-    fh = logging.FileHandler(log_dir / f"{name}.log", encoding="utf-8")
+    fh = logging.FileHandler(log_file, encoding="utf-8")
     sh = logging.StreamHandler()
 
     fmt = logging.Formatter("%(asctime)s %(levelname)-8s [%(name)s] %(message)s")

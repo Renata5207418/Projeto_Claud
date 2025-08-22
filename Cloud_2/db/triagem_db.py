@@ -47,8 +47,21 @@ def init():
             gerou_tomados   INTEGER,   -- 0/1
             gerou_extrato   INTEGER,   -- 0/1
             pubsub_ok       INTEGER DEFAULT 0,
+            ok_usuario      INTEGER DEFAULT 0,  
+            ok_updated_at   TEXT,        
             updated_at      TEXT
         )""")
+        c.commit()
+
+
+def set_ok_status(os_id: int, ok: bool) -> None:
+    with _c() as c:
+        c.execute("""
+            UPDATE os_triagem
+               SET ok_usuario   = ?,
+                   ok_updated_at = datetime('now'),
+                   updated_at    = datetime('now')
+             WHERE os_id = ?""", (1 if ok else 0, os_id))
         c.commit()
 
 

@@ -1,5 +1,6 @@
 import logging
 import sys
+from datetime import datetime
 from config.settings import settings
 
 # Diretório onde ficam todos os arquivos de log
@@ -22,26 +23,23 @@ def configure_logging(name: str = "onvio_rpa") -> logging.Logger:
       log.info("mensagem de teste")
     """
     logger = logging.getLogger(name)
-    # Se já tiver handlers, assume que já foi configurado e retorna
     if logger.handlers:
         return logger
 
-    # Define o nível mínimo de captura de logs
     logger.setLevel(logging.INFO)
 
-    # Formato das mensagens de log
     fmt = logging.Formatter(
         "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # 1) Handler de arquivo
-    log_file = logs_dir / "bot_onvio.log"
+    # Adiciona mês/ano ao nome do log
+    now = datetime.now()
+    log_file = logs_dir / f"bot_onvio_{now.strftime('%Y-%m')}.log"
     fh = logging.FileHandler(log_file, encoding="utf-8")
     fh.setFormatter(fmt)
     logger.addHandler(fh)
 
-    # 2) Handler de console (stdout)
     sh = logging.StreamHandler(sys.stdout)
     sh.setFormatter(fmt)
     logger.addHandler(sh)

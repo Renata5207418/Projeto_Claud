@@ -1,7 +1,5 @@
 import sqlite3
 import contextlib
-import datetime
-from datetime import timezone
 from config.settings import settings
 
 _QDB = settings.root_dir / "queue.db"
@@ -30,7 +28,7 @@ def _init():
           CREATE TABLE IF NOT EXISTS queue (
               id     INTEGER PRIMARY KEY AUTOINCREMENT,
               os_id  INTEGER,
-              enqueued_at TEXT
+              enqueued_at  TEXT DEFAULT CURRENT_TIMESTAMP
           )
         """)
         c.commit()
@@ -51,8 +49,7 @@ def publish(os_id: int):
       - Insere registro (os_id, timestamp UTC) na tabela.
     """
     with _conn() as c:
-        c.execute("INSERT INTO queue (os_id, enqueued_at) VALUES (?, ?)",
-                  (os_id, datetime.datetime.now(timezone.utc).isoformat()))
+        c.execute("INSERT INTO queue (os_id) VALUES (?)", (os_id,))
         c.commit()
 
 

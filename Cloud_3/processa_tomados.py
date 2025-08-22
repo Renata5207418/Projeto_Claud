@@ -2,7 +2,6 @@ import os
 import time
 import json
 from datetime import datetime, timezone
-import logging
 from pathlib import Path
 from config.settings import settings
 from db.triage_consulta import set_tomados_concluido, claim_pendentes
@@ -13,23 +12,21 @@ from utils.tratamentos import (
 from utils.acumuladores import acumuladores
 from utils.consulta_for import dados_fornecedor
 from utils.tratamentos_csv import exe
-from utils.gcs_upload import upload_file
+from utils.logging_config import configure_logging
+from utils.gcs_upload import upload_file, any_blob, upload_txt_dir
+from db.triage_consulta import list_processando_stale
 from google.api_core import exceptions
 from utils.document_ai import process_document
 
 # Configura o logger
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-log = logging.getLogger("tomados")
+log = configure_logging("tomados")
 
 SEPARADOS_DIR = Path(settings.separados_dir)
 TEMPO_ESPERA = settings.tempo_espera
 HEARTBEAT = Path(__file__).parent / "heartbeat.json"
 
 
-def beat(msg: str = "ok"):
+def beat(msg: str = "ok", status: str = "idle"):
     """
     Atualiza (ou cria) heartbeat.json com timestamp UTC e mensagem.
     Útil para monitorar a saúde do processo externamente.
@@ -37,6 +34,7 @@ def beat(msg: str = "ok"):
     data = {
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "msg": msg,
+        "status": status,
     }
     HEARTBEAT.write_text(json.dumps(data))
 
@@ -152,6 +150,49 @@ def processar_empresa(empresa_pasta: Path):
     log.info("[%s] Processamento finalizado", empresa_nome)
 
 
+def reconciliar_processando(timeout_min: int = 30) -> None:
+    """
+    Conserta OS travadas em 'Processando':
+      - se já houver saída no GCS ⇒ marca Concluído
+      - senão, se existir .txt local ⇒ reenvia para o bucket e marca Concluído
+    """
+    stuck = list_processando_stale(minutos=timeout_min)
+    if not stuck:
+        return
+
+    log.info("Reconciliação: %d OS em 'Processando' antigas: %s",
+             len(stuck), [i for i, _ in stuck])
+
+    for os_id, _pasta in stuck:
+        # acha a pasta local por prefixo (ex.: "27806-...")
+        empresa_pasta = next(
+            (p for p in SEPARADOS_DIR.iterdir()
+             if p.is_dir() and p.name.startswith(f"{os_id}-")),
+            None
+        )
+        if not empresa_pasta:
+            log.info("[OS %s] Sem pasta local — ignorando por ora.", os_id)
+            continue
+
+        gcs_prefix = f"{settings.gcs_prefix_resultados}/{empresa_pasta.name}"
+        # 1) já tem algo no GCS?
+        if any_blob(settings.gcs_bucket_tomados, gcs_prefix):
+            set_tomados_concluido(os_id)
+            log.info("[%s] Reconciliação: já existe no GCS ⇒ Concluído.", empresa_pasta.name)
+            continue
+
+        # 2) sem GCS; há .txt local para reenvio?
+        txts = list(empresa_pasta.glob("*.txt"))
+        if txts:
+            enviados = upload_txt_dir(empresa_pasta, settings.gcs_bucket_tomados, gcs_prefix)
+            if enviados > 0:
+                set_tomados_concluido(os_id)
+                log.info("[%s] Reconciliação: reenviou %d .txt ⇒ Concluído.", empresa_pasta.name, enviados)
+                continue
+
+        log.info("[%s] Reconciliação: sem saída no GCS e sem .txt local — sem ação.", empresa_pasta.name)
+
+
 def main():
     """
     Entry point para processamento em batch:
@@ -161,6 +202,11 @@ def main():
     3. Se existir TOMADOS/ com PDFs, chama `processar_empresa`
     4. Após, marca `tomados_status = 'Concluído'` no DB
     """
+    try:
+        reconciliar_processando(timeout_min=30)
+    except Exception as e:
+        log.error("Falha na reconciliação: %s", e, exc_info=True)
+
     for os_id in claim_pendentes():
         # Procura a(s) pasta(s) correspondentes pelo padrão do nome
         pastas = [p for p in SEPARADOS_DIR.iterdir() if p.is_dir() and p.name.startswith(str(os_id))]
@@ -170,6 +216,7 @@ def main():
                 log.info(f"[{empresa_pasta.name}] Nenhum arquivo para processar.")
                 continue
             # Processa os arquivos
+            beat(f"Processando {empresa_pasta.name}", status="running")
             log.info(f"[{empresa_pasta.name}] Iniciando processamento dos arquivos na pasta.")
             processar_empresa(empresa_pasta)
             # Marca como processado no banco
@@ -196,13 +243,13 @@ def processar_os_pubsub(os_id, pasta_nome):
 
 if __name__ == "__main__":
     while True:
-        beat("Aguardando novas solicitações")
+        beat("Aguardando novas solicitações", status="idle")
         try:
             main()
-            beat("Processamento concluído para todos os pendentes")
+            beat("Processamento concluído para todos os pendentes", status="idle")
         except Exception as e:
             log.error("Falha ao processar os tomados: %s", e, exc_info=True)
-            beat(f"Erro ao processar os tomados: {e}")
+            beat(f"Erro ao processar os tomados: {e}", status="erro")
 
         log.info("Aguardando próximo ciclo...")
         time.sleep(30)

@@ -51,12 +51,12 @@ def init_db():
                 last_try      TEXT,
                 created_at    TEXT,
                 updated_at    TEXT,
-
                 apelido       TEXT,
                 assunto       TEXT,
                 descricao     TEXT,
                 anexos_total  INTEGER,
-                lido          INTEGER DEFAULT 0
+                lido          INTEGER DEFAULT 0,
+                motivo        TEXT
             )
             """
         )
@@ -73,12 +73,7 @@ def exists(os_id: int) -> bool:
         return cur.fetchone() is not None
 
 
-def upsert_os(
-    os_id: int,
-    status: str = "pendente",
-    *,
-    last_try: str | datetime.datetime | None = None,
-):
+def upsert_os(os_id: int, status: str = "pendente", *, last_try: str | datetime.datetime | None = None):
     """
     Insere nova OS OU atualiza status quando já existir.
     Não altera `tentativas`.
@@ -112,13 +107,7 @@ def upsert_os(
         c.commit()
 
 
-def mark_status(
-    os_id: int,
-    status: str,
-    *,
-    inc_try: bool = False,
-    extra: dict | None = None,
-):
+def mark_status(os_id: int, status: str, *, inc_try: bool = False, extra: dict | None = None):
     """
     Atualiza status + updated_at + last_try.
     Se `inc_try=True`, incrementa `tentativas`.
@@ -183,3 +172,12 @@ def list_for_retry(status: str, max_try: int, cooldown_minutes: int) -> list[int
     with _conn() as c:
         cur = c.execute(sql, (status, max_try, offset))
         return [row["os_id"] for row in cur.fetchall()]
+
+
+def get_motivo(os_id: int) -> str | None:
+    with _conn() as c:
+        cur = c.execute("SELECT motivo FROM os_downloads WHERE os_id = ?", (os_id,))
+        row = cur.fetchone()
+        if row:
+            return row["motivo"]
+    return None

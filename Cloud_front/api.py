@@ -44,7 +44,12 @@ app = FastAPI()
 # Configura CORS para frontend em localhost:3000/3001
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://10.0.0.78:3000",
+        "http://10.0.0.78:3001"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -79,7 +84,9 @@ def export_report(month: str = Query(..., regex=r"^\d{4}\-\d{2}$")):
                 "assunto",
                 "descricao",
                 "created_at",
-                "lido"
+                "lido",
+                "updated_at",
+                "last_try"
             ])
         )
 
@@ -88,6 +95,15 @@ def export_report(month: str = Query(..., regex=r"^\d{4}\-\d{2}$")):
             conn2,
             params=[month]
         )
+        if "pasta_cliente" in df_tri.columns:
+            df_tri["Copiado p/ Cliente"] = df_tri["pasta_cliente"].apply(
+                lambda x: "SIM" if isinstance(x, str) and x and "NÃO ENVIADO" not in x else "NÃO"
+            )
+
+        # AJUSTE: Remove colunas desnecessárias, incluindo "updated_at"
+        for col in ["pasta_cliente", "pubsub_ok", "updated_at"]:
+            if col in df_tri.columns:
+                df_tri = df_tri.drop(columns=[col])
 
         df_msg = pd.read_sql_query(
             """
@@ -106,23 +122,11 @@ def export_report(month: str = Query(..., regex=r"^\d{4}\-\d{2}$")):
         conn1.close()
         conn2.close()
 
-        # ── 2) Formata datas ───────────────────────────────────────────────────
-        for df, col in ((df_dl, "updated_at"), (df_tri, "updated_at")):
-            df[col] = (
-                pd.to_datetime(
-                    df[col],
-                    errors="coerce",
-                    infer_datetime_format=True
-                )
-                .dt.strftime("%d/%m/%Y %H:%M:%S")
-            )
-
-        # ── 3) Renomeia colunas de Downloads e Triagem ────────────────────────
+        # ── 2) Renomeia colunas de Downloads e Triagem ────────────────────────
         df_dl = df_dl.rename(columns={
             "os_id": "OS",
             "status": "Status Download",
             "tentativas": "Tentativas",
-            "updated_at": "Última Atualização",
             "apelido": "Empresa",
             "anexos_total": "Total Anexos"
         })
@@ -132,13 +136,8 @@ def export_report(month: str = Query(..., regex=r"^\d{4}\-\d{2}$")):
             "triagem_status": "Status Triagem",
             "tomados_status": "Status Tomados",
             "gerou_tomados": "Gerou Tomados",
-            "gerou_extrato": "Gerou Extrato",
-            "updated_at": "Última Atualização",
-            "pasta_cliente": "Pasta Cliente"
+            "gerou_extrato": "Gerou Extrato"
         })
-        df_tri["Copiado p/ Cliente?"] = df_tri["Pasta Cliente"].apply(
-            lambda x: "SIM" if isinstance(x, str) and x and "NÃO ENVIADO" not in x else "NÃO"
-        )
 
         # ── 4) Gera o Excel com styling ───────────────────────────────────────
         output = io.BytesIO()
@@ -153,29 +152,43 @@ def export_report(month: str = Query(..., regex=r"^\d{4}\-\d{2}$")):
             ws_msg = writer.sheets["Mensagens"]
 
             header_fmt = wb.add_format({
-                "bold":     True,
-                "bg_color": "#F1C40F",
-                "font_color": "#000000",
-                "border": 1
+                "bold": True, "bg_color": "#fbba00", "font_color": "#FFFFFF",
+                "border": 1, "align": "center", "valign": "vcenter"
             })
+            fmt_bom = wb.add_format({"bg_color": "#C6EFCE", "font_color": "#006100"})
+            fmt_ruim = wb.add_format({"bg_color": "#FFC7CE", "font_color": "#9C0006"})
 
+            # Aplica formatação condicional na aba "Triagem"
+            num_rows = len(df_tri)
+            if num_rows > 0:
+                for col_name, values in {
+                    "Gerou Tomados": ("SIM", "NÃO"),
+                    "Gerou Extrato": ("SIM", "NÃO"),
+                    "Copiado p/ Cliente": ("SIM", "NÃO"),
+                }.items():
+                    if col_name in df_tri.columns:
+                        col_idx = df_tri.columns.get_loc(col_name)
+                        ws_tri.conditional_format(1, col_idx, num_rows, col_idx,
+                                                  {"type": "cell", "criteria": "==", "value": f'"{values[0]}"',
+                                                   "format": fmt_bom})
+                        ws_tri.conditional_format(1, col_idx, num_rows, col_idx,
+                                                  {"type": "cell", "criteria": "==", "value": f'"{values[1]}"',
+                                                   "format": fmt_ruim})
+
+            # Aplica styling geral
             for ws, df in ((ws_dl, df_dl), (ws_tri, df_tri), (ws_msg, df_msg)):
                 ws.freeze_panes(1, 0)
-                ws.autofilter(0, 0, 0, len(df.columns)-1)
+                ws.autofilter(0, 0, len(df) - 1 if len(df) > 0 else 0, len(df.columns) - 1)
                 for idx, col in enumerate(df.columns):
                     ws.write(0, idx, col, header_fmt)
-                    max_len = max(df[col].astype(str).map(len).max(), len(col))
-                    ws.set_column(idx, idx, max_len + 2)
+                    max_len = max(df[col].astype(str).map(len).max(), len(col)) if len(df) > 0 else len(col)
+                    ws.set_column(idx, idx, max_len + 3)
 
         output.seek(0)
         return StreamingResponse(
             output,
-            media_type=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
-            headers={
-                "Content-Disposition": f"attachment; filename=relatorio_{month}.xlsx"
-            }
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=relatorio_{month}.xlsx"}
         )
 
     except Exception as e:
@@ -214,6 +227,33 @@ async def mark_lido(os_id: int, payload: LidoUpdate):
         raise HTTPException(status_code=500, detail=f"Erro ao atualizar o status: {e}")
 
 
+# ───────── helper para status triagem ─────────
+class OkUpdate(BaseModel):
+    ok: bool
+
+
+@app.post("/mark_ok/{os_id}")
+async def mark_ok(os_id: int, payload: OkUpdate, _: str = Depends(get_current_user)):
+    try:
+        db_path = BASE2 / "triage_status.db"
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        ok_int = 1 if payload.ok else 0
+        cur.execute("""
+            UPDATE os_triagem
+               SET ok_usuario   = ?,
+                   ok_updated_at = datetime('now'),
+                   updated_at    = datetime('now')
+             WHERE os_id = ?""",
+                    (ok_int, os_id)
+                    )
+        conn.commit()
+        conn.close()
+        return {"message": "OK atualizado com sucesso"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao marcar OK: {e}")
+
+
 # ───────── Helpers genéricos para leitura de DB ─────────
 async def fetch_rows(db: pathlib.Path, query: str):
     """
@@ -225,9 +265,16 @@ async def fetch_rows(db: pathlib.Path, query: str):
         rows = await conn.execute_fetchall(query)
 
     # ---------- DEBUG ----------
-    if rows:
-        print(">>> DEBUG keys:", list(rows[0].keys()))
-        print(">>> DEBUG row :", dict(rows[0]))
+    try:
+        print(f">>> DEBUG total rows: {len(rows)}")
+        if rows:
+            dict_rows = [dict(r) for r in rows]  # <-- converte as Rows para dict
+            from collections import Counter
+            cnt = Counter(r.get("tomados_status") for r in dict_rows if "tomados_status" in r)
+            print(">>> DEBUG tomados_status dist.:", dict(cnt))
+            print(">>> DEBUG first row:", dict_rows[0])
+    except Exception as e:
+        print(">>> DEBUG error:", e)
     # ---------------------------
 
     return [
@@ -240,29 +287,27 @@ def read_hb(path: pathlib.Path):
     """
     Lê heartbeat.json e devolve:
       { state: running/idle/down, age: seg, msg: str }
-    Considera running  <120 s, idle <600 s, down >=600 s.
     """
     try:
         data = json.loads(path.read_text())
 
-        # converte "2025-07-17T16:32:10Z" →  datetime com tz UTC
         ts = datetime.datetime.fromisoformat(
             data["ts"].replace("Z", "+00:00")
         )
-
         age_sec = (datetime.datetime.now(datetime.timezone.utc) - ts).total_seconds()
 
-        if age_sec < 120:
-            state = "running"
-        elif age_sec < 600:
-            state = "idle"
-        else:
+        # timeout para considerar "down"
+        TIMEOUT = 600  # segundos (10 min)
+        if age_sec >= TIMEOUT:
             state = "down"
+        else:
+            # Preferir status explícito se vier do beat
+            # (caso contrário, inferir pelo tempo: <120 = running, <600 = idle)
+            state = data.get("status") or ("running" if age_sec < 120 else "idle")
 
         return {"state": state, "age": int(age_sec), "msg": data.get("msg", "")}
 
     except Exception as e:
-        # log opcional: print(f"read_hb erro: {e}")
         return {"state": "unknown", "age": None, "msg": ""}
 
 
@@ -281,16 +326,79 @@ async def get_downloads(_: str = Depends(get_current_user)):
         REPLACE(substr(created_at, 1, 19), ' ', 'T') || 'Z'  AS created_at,
         REPLACE(substr(updated_at, 1, 19), ' ', 'T') || 'Z'  AS updated_at,
         apelido,
-        anexos_total
+        anexos_total,
+        motivo
     FROM os_downloads
     ORDER BY os_id DESC
-    LIMIT 200
     """
     db = BASE1 / "os_status.db"
     return await fetch_rows(db, sql)
 
 
 # ───────── Endpoint: lista triagem (Cloud_2) ─────────
+if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = (
+        r"C:/Users/usuario/PycharmProjects/Cloud_front/keys/credenciais_Cloud.json"
+    )
+
+STORAGE_CLIENT = storage.Client()
+BUCKET_NAME = "claudio-tomados"
+BUCKET = STORAGE_CLIENT.bucket(BUCKET_NAME)
+
+
+async def reconcile_tomados(rows: list[dict]) -> list[dict]:
+    """
+    Para OS com tomados_status em ('Pendente','Processando'), procura no GCS
+    por QUALQUER subpasta que comece com tomados_saida/{os_id}-.
+    Se encontrar, marca como 'Concluído' no SQLite e na resposta.
+    """
+    candidatos = [r for r in rows if r.get("tomados_status") in ("Pendente", "Processando")]
+    if not candidatos:
+        print(">>> RECONCILE: nenhum candidato (Pendente/Processando)")
+        return rows
+
+    print(">>> RECONCILE: candidatos:", [r["os_id"] for r in candidatos])
+
+    db = BASE2 / "triage_status.db"
+    concluidos = []
+
+    async with aiosqlite.connect(db) as conn:
+        for r in candidatos:
+            os_id = r["os_id"]
+
+            # Procura por qualquer pasta "tomados_saida/{os_id}-*/"
+            prefix_id = f"tomados_saida/{os_id}-"
+            # Colete até alguns blobs só para confirmar existência e capturar o nome da pasta real
+            folders_found = set()
+            for blob in BUCKET.list_blobs(prefix=prefix_id, max_results=20):
+                # blob.name = "tomados_saida/{folder}/{arquivo}"
+                parts = blob.name.split("/", 2)
+                if len(parts) >= 2 and parts[0] == "tomados_saida":
+                    folders_found.add(parts[1])
+            print(f">>> RECONCILE: scan {prefix_id} -> folders_found={folders_found}")
+
+            if not folders_found:
+                continue  # nada no bucket para este os_id
+
+            # Se chegou aqui, já existe saída para esse os_id; marque como Concluído
+            await conn.execute(
+                """
+                UPDATE os_triagem
+                   SET tomados_status = 'Concluído',
+                       updated_at     = datetime('now')
+                 WHERE os_id = ?
+                """,
+                (os_id,),
+            )
+            r["tomados_status"] = "Concluído"
+            concluidos.append(os_id)
+
+        await conn.commit()
+
+    print(">>> RECONCILE: marcados como Concluído:", concluidos)
+    return rows
+
+
 @app.get("/triagem")
 async def get_triagem(_: str = Depends(get_current_user)):
     """
@@ -305,12 +413,17 @@ async def get_triagem(_: str = Depends(get_current_user)):
         tomados_status,
         gerou_tomados,
         gerou_extrato,
+        ok_usuario,
         updated_at
     FROM os_triagem
     ORDER BY updated_at DESC
     """
     db = BASE2 / "triage_status.db"
-    return await fetch_rows(db, sql)
+    rows = await fetch_rows(db, sql)
+    # >>> AQUI: se já tem arquivos no bucket, vira para Concluído no DB e na resposta
+    rows = await reconcile_tomados(rows)
+
+    return rows
 
 
 @app.get("/tomados/{pasta:path}")
@@ -444,14 +557,15 @@ async def get_status(_: str = Depends(get_current_user)):
 async def custom_404_handler(request: Request, exc):
     return HTMLResponse(
         '''
-        <div style="font-family: Verdana, Geneva, sans-serif; font-size: 10pt; color: #222; background: #111; padding: 24px;">
+        <div style="font-family: Verdana, Geneva, sans-serif; font-size: 10pt; color: #222; background: #111;
+         padding: 24px;">
           <h2 style="color: #F1C40F;">Página não encontrada</h2>
           <p>O link acessado não existe ou expirou.</p>
-          <a href="http://localhost:3000/" style="color: #F1C40F; text-decoration: underline;">Voltar para o início</a>
+          <a href="/" style="color: #F1C40F; text-decoration: underline;">Voltar para o início</a>
         </div>
         ''',
         status_code=404
     )
 
 # Inicie a API com:
-#   uvicorn api:app --reload
+#   uvicorn api:app --host 0.0.0.0

@@ -1,9 +1,10 @@
 import time
 import shutil
 from pathlib import Path
+from selenium.common.exceptions import WebDriverException, TimeoutException, NoSuchWindowException
 
 
-def espera_download(download_dir: Path, antes: set[str], timeout: int = 600) -> list[Path]:
+def espera_download(download_dir: Path, antes: set[str], timeout: int = 600, post_delay: int = 0) -> list[Path]:
     """
         Aguarda até que novos arquivos terminem de baixar em `download_dir`.
 
@@ -23,6 +24,8 @@ def espera_download(download_dir: Path, antes: set[str], timeout: int = 600) -> 
         agora = {p.name for p in download_dir.iterdir()}
         novos = [download_dir / n for n in (agora - antes) if not n.endswith(".crdownload")]
         if novos:
+            if post_delay > 0:
+                time.sleep(post_delay)
             return novos
         time.sleep(1)
     raise TimeoutError("Download não terminou no tempo limite")
@@ -43,6 +46,35 @@ def mover_arquivos(arquivos: list[Path], destino: Path):
     destino.mkdir(parents=True, exist_ok=True)
     for arq in arquivos:
         shutil.move(arq, destino / arq.name)
+
+
+def formatar_erro_usuario(e: Exception) -> str:
+    """Traduz exceções técnicas em mensagens amigáveis para o heartbeat."""
+
+    # 1. Erros específicos do Selenium (navegador)
+    if isinstance(e, NoSuchWindowException):
+        return "A janela do navegador foi fechada inesperadamente. Reiniciando o processo."
+
+    if isinstance(e, TimeoutException):
+        return "A página demorou muito para responder (timeout). Verificando conexão e tentando novamente."
+
+    if isinstance(e, WebDriverException):
+        msg_limpa = getattr(e, "msg", str(e)).split("Stacktrace:")[0].strip()
+        return f"Ocorreu um erro no navegador: {msg_limpa}"
+
+    # 2. Erros de conexão
+    err_str = str(e).lower()  # Converte para minúsculas para facilitar a busca
+    if "connectionreseterror" in err_str or "10054" in err_str or "connection aborted" in err_str:
+        return "A conexão com o portal foi perdida ou reiniciada. Tentando novamente em breve."
+
+    if "connection refused" in err_str:
+        return "Não foi possível conectar ao portal (conexão recusada). Verifique se o portal está online."
+
+    if "timed out" in err_str:
+        return "A tentativa de conexão com o portal expirou (timeout). Verificando..."
+
+    # 3. Fallback para qualquer outro erro
+    return str(e).splitlines()[0]
 
 
 # Dicionário único de seletores CSS usados pela automação

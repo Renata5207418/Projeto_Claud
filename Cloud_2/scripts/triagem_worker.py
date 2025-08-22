@@ -1,5 +1,6 @@
 import time
 import json
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from config.settings import settings
@@ -121,9 +122,26 @@ if __name__ == "__main__":
         # Encontra o nome da pasta para o log antes de processar
         pasta_entry = next((p for p in settings.separados_dir.iterdir() if p.name.startswith(f"{job_id}-")), None)
         if pasta_entry:
-            beat(f"Processando {pasta_entry.name}")
-            process_os(job_id)
-            beat(f"Concluído {pasta_entry.name}")
+            # ----------- HEARTBEAT PERIÓDICO ENQUANTO PROCESSA -----------
+            keep_beating = True
+
+            def heartbeat_thread():
+                while keep_beating:
+                    beat(f"Processando {pasta_entry.name}")
+                    time.sleep(15)  # ajuste conforme seu frontend
+
+
+            t = threading.Thread(target=heartbeat_thread)
+            t.start()
+            # --------------------------------------------------------------------
+
+            try:
+                process_os(job_id)  # não muda NADA do seu processamento!
+            finally:
+                keep_beating = False
+                t.join()
+                beat(f"Concluído {pasta_entry.name}")
+
         else:
             log.warning("Job %d recebido, mas a pasta correspondente não foi encontrada. Ignorando.", job_id)
             beat(f"Erro: pasta para job {job_id} não encontrada")

@@ -19,6 +19,7 @@ class Settings(BaseSettings):
       • caminhos de diretório (DOWNLOAD_DIR, BAIXADOS_DIR, SEPARADOS_DIR)
       • outras constantes (sleep_seconds, max_attempts, portal_url etc.)
     """
+    first_seed_min_id: int | None = None
     onvio_user: str = Field(..., alias="ONVIO_USER")
     onvio_pass: str = Field(..., alias="ONVIO_PASS")
 
@@ -36,7 +37,7 @@ class Settings(BaseSettings):
     db_path: Path = ROOT_DIR / "os_status.db"
 
     sleep_seconds: int = 200
-    max_attempts: int = 3
+    max_attempts: int = 4
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

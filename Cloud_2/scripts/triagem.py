@@ -119,7 +119,7 @@ def requisicao_robson(pdf_base64: str) -> list:
 
     Atenção: o caminho de credenciais está fixo; mova para settings/.env.
     """
-    credentials_path = r'C:\Users\usuario\PycharmProjects\Claudio_completo\processamento_claudio\claudio-418319-d3c155f4d0a0.json'
+    credentials_path = r'C:\Users\Usuario\PycharmProjects\Cloud_2\keys\firestore-bot.json'
     credentials = service_account.Credentials.from_service_account_file(
         credentials_path,
         scopes=['https://www.googleapis.com/auth/cloud-platform']
@@ -257,15 +257,15 @@ def exe(pasta_mesa):
        4) gera relatório final em processamento_concluido.txt
      """
     logging.info(f"=== Iniciando extração da pasta separada: {pasta_mesa} ===")
-    diretorio = os.path.join(BASE_TESTES, 'SEPARADOS', pasta_mesa)
+    diretorio = os.path.join(settings.separados_dir, pasta_mesa)
 
     # 1) Extrai ZIP/RAR internos (recursivo) e organiza extensões
-    scan_e_extraia_recursivo(diretorio)
+    scan_e_extraia_recursivo(str(diretorio))
     organiza_extensao()
 
     # 2) Monta lista de todos os arquivos em qualquer subpasta
     arquivos_para_processar = []
-    for root, _, files in os.walk(diretorio):
+    for root, _, files in os.walk(str(diretorio)):
         for nome in files:
             arquivos_para_processar.append(os.path.join(root, nome))
 
@@ -275,7 +275,7 @@ def exe(pasta_mesa):
     logging.info(f"Total de arquivos detectados: {total_arquivos}")
 
     for caminho in arquivos_para_processar:
-        rel = os.path.relpath(caminho, diretorio)
+        rel = os.path.relpath(str(caminho), str(diretorio))
         ext = os.path.splitext(caminho)[1].lower()
         logging.info(f"Processando: {rel}")
 
@@ -287,35 +287,35 @@ def exe(pasta_mesa):
                     os.remove(caminho)
                 else:
                     # Move para ERRO_PROCESSAMENTO se falhou
-                    erro_dir = os.path.join(diretorio, ERRO_PROCESSAMENTO_DIR)
+                    erro_dir = os.path.join(str(diretorio), ERRO_PROCESSAMENTO_DIR)
                     os.makedirs(erro_dir, exist_ok=True)
-                    shutil.move(caminho, os.path.join(erro_dir, os.path.basename(caminho)))
+                    shutil.move(str(caminho), os.path.join(str(erro_dir), os.path.basename(str(caminho))))
                     logging.info(f"{rel} → ERRO_PROCESSAMENTO (falha na extração de ZIP/RAR)")
                 continue
 
             # --- 2) Mover planilhas ---
             if ext in ('.xlsx', '.xls'):
-                planilhas_dir = os.path.join(diretorio, 'PLANILHAS')
+                planilhas_dir = os.path.join(str(diretorio), 'PLANILHAS')
                 os.makedirs(planilhas_dir, exist_ok=True)
-                shutil.move(caminho, os.path.join(planilhas_dir, os.path.basename(caminho)))
+                shutil.move(str(caminho), os.path.join(str(planilhas_dir), os.path.basename(str(caminho))))
                 logging.info(f"{rel} → PLANILHAS")
                 arquivos_processados += 1
                 continue
 
             # --- 3) Mover imagens/prints ---
             if ext in ('.jpg', '.jpeg', '.png'):
-                imagens_dir = os.path.join(diretorio, 'IMAGEM_PRINT')
+                imagens_dir = os.path.join(str(diretorio), 'IMAGEM_PRINT')
                 os.makedirs(imagens_dir, exist_ok=True)
-                shutil.move(caminho, os.path.join(imagens_dir, os.path.basename(caminho)))
+                shutil.move(str(caminho), os.path.join(str(imagens_dir), os.path.basename(str(caminho))))
                 logging.info(f"{rel} → IMAGEM_PRINT")
                 arquivos_processados += 1
                 continue
 
             # --- 4) Mover XMLs ---
             if ext == '.xml':
-                xml_dir = os.path.join(diretorio, 'XML')
+                xml_dir = os.path.join(str(diretorio), 'XML')
                 os.makedirs(xml_dir, exist_ok=True)
-                shutil.move(caminho, os.path.join(xml_dir, os.path.basename(caminho)))
+                shutil.move(str(caminho), os.path.join(str(xml_dir), os.path.basename(str(caminho))))
                 logging.info(f"{rel} → XML")
                 arquivos_processados += 1
                 continue
@@ -328,16 +328,16 @@ def exe(pasta_mesa):
                 raise ValueError(f"Extensão não suportada: {ext}")
 
             # --- 6) Tenta abrir o PDF ---
-            reader = PyPDF2.PdfReader(caminho)
+            reader = PyPDF2.PdfReader(str(caminho))
             if getattr(reader, "is_encrypted", False):
                 raise PdfReadError("PDF protegido por senha")
             paginas = len(reader.pages)
 
             # --- 7) PDFs muito grandes ---
             if paginas > 299:
-                dest = os.path.join(diretorio, LIMITE_PAGINAS_DIR)
+                dest = os.path.join(str(diretorio), LIMITE_PAGINAS_DIR)
                 os.makedirs(dest, exist_ok=True)
-                shutil.move(caminho, os.path.join(dest, os.path.basename(caminho)))
+                shutil.move(str(caminho), os.path.join(str(dest), os.path.basename(str(caminho))))
                 continue
 
             # --- 8) Classificação via Robson ---
@@ -352,29 +352,29 @@ def exe(pasta_mesa):
             else:
                 pasta_dest = LOW_CONFIDENCE_DIR
 
-            destino = os.path.join(diretorio, pasta_dest)
+            destino = os.path.join(str(diretorio), pasta_dest)
             os.makedirs(destino, exist_ok=True)
-            shutil.move(caminho, os.path.join(destino, os.path.basename(caminho)))
+            shutil.move(str(caminho), os.path.join(str(destino), os.path.basename(str(caminho))))
             arquivos_processados += 1
 
         except Exception as err:
             # --- 10) Qualquer falha: move para ERRO_PROCESSAMENTO ---
-            erro_dir = os.path.join(diretorio, ERRO_PROCESSAMENTO_DIR)
+            erro_dir = os.path.join(str(diretorio), ERRO_PROCESSAMENTO_DIR)
             os.makedirs(erro_dir, exist_ok=True)
-            shutil.move(caminho, os.path.join(erro_dir, os.path.basename(caminho)))
+            shutil.move(str(caminho), os.path.join(str(erro_dir), os.path.basename(str(caminho))))
             logging.error(f"[{rel}] não foi possível processar: {err}. "
                           f"Movido para {ERRO_PROCESSAMENTO_DIR}", exc_info=True)
             continue
 
     # --- 11) Limpa pastas vazias remanescentes (opcional) ---
-    for root, _, _ in os.walk(diretorio, topdown=False):
+    for root, _, _ in os.walk(str(diretorio), topdown=False):
         # só remove se estiver realmente vazio agora e não for a raiz
         if root != diretorio and not os.listdir(root):
             os.rmdir(root)
 
     # --- 12) Gera relatório final ---
     try:
-        status_path = os.path.join(diretorio, 'processamento_concluido.txt')
+        status_path = os.path.join(str(diretorio), 'processamento_concluido.txt')
         with open(status_path, 'w', encoding='utf-8') as f:
             f.write(f"Processamento concluído em: {datetime.datetime.now().isoformat()}\n")
             f.write(f"Total de arquivos detectados: {total_arquivos}\n")

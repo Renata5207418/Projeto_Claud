@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '../services/api';                    // 👈 novo import
+import { api } from '../services/api';
 import {
   Box, Card, CardContent, Typography, Chip, TextField, Button, Container,
   CircularProgress, Stack, Fade, Avatar
@@ -17,7 +17,7 @@ dayjs.locale('pt-br');
 type WorkerState = 'running' | 'idle' | 'down';
 type Worker = { state: WorkerState; age: number | null; msg: string };
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = 'http://10.0.0.78:8000';
 const WORKER_KEYS = ['cloud1', 'cloud2', 'cloud3'];
 const FETCH_INTERVAL = 15000;
 
@@ -88,7 +88,7 @@ export default function CloudStatusDashboard() {
     window.open(`${API_BASE_URL}/export?month=${exportMonth}`, '_blank');
 
   return (
-    <Box sx={{ backgroundColor:'#f7f9fc', minHeight:'100vh', py:5 }}>
+    <Box sx={{ backgroundColor:'#f7f9fc', minHeight:'100vh', pb:5 }}>
       <Container maxWidth="lg">
         <Stack spacing={4}>
           {/* Cabeçalho */}
@@ -146,7 +146,7 @@ export default function CloudStatusDashboard() {
                 gap:3
               }}>
                 {WORKER_KEYS.map(key => (
-                  <StatusCard key={key} workerName={key} workerData={status[key]} />  // 👈 agora tipa corretamente
+                  <StatusCard key={key} workerName={key} workerData={status[key]} />  // 👈 tipa corretamente
                 ))}
               </Box>
             </Fade>
