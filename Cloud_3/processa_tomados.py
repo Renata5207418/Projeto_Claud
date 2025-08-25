@@ -13,7 +13,7 @@ from utils.acumuladores import acumuladores
 from utils.consulta_for import dados_fornecedor
 from utils.tratamentos_csv import exe
 from utils.logging_config import configure_logging
-from utils.gcs_upload import upload_file, any_blob, upload_txt_dir
+from utils.gcs_upload import upload_file, any_blob, upload_permitidos
 from db.triage_consulta import list_processando_stale
 from google.api_core import exceptions
 from utils.document_ai import process_document
@@ -152,9 +152,11 @@ def processar_empresa(empresa_pasta: Path):
 
 def reconciliar_processando(timeout_min: int = 30) -> None:
     """
-    Conserta OS travadas em 'Processando':
-      - se já houver saída no GCS ⇒ marca Concluído
-      - senão, se existir .txt local ⇒ reenvia para o bucket e marca Concluído
+    Corrige OS travadas em 'Processando':
+      - Conclui somente se houver GERAL.txt ou TOMADOS*.txt no GCS
+      - Senão, se houver localmente, envia apenas os permitidos e conclui
+      - Senão, se houver PDFs em TOMADOS/, processa, envia e conclui
+      - Nunca envia arquivos fora da política (ex.: MENSAGEM_DO_CLIENTE, processamento_concluido)
     """
     stuck = list_processando_stale(minutos=timeout_min)
     if not stuck:
@@ -164,7 +166,6 @@ def reconciliar_processando(timeout_min: int = 30) -> None:
              len(stuck), [i for i, _ in stuck])
 
     for os_id, _pasta in stuck:
-        # acha a pasta local por prefixo (ex.: "27806-...")
         empresa_pasta = next(
             (p for p in SEPARADOS_DIR.iterdir()
              if p.is_dir() and p.name.startswith(f"{os_id}-")),
@@ -175,22 +176,44 @@ def reconciliar_processando(timeout_min: int = 30) -> None:
             continue
 
         gcs_prefix = f"{settings.gcs_prefix_resultados}/{empresa_pasta.name}"
-        # 1) já tem algo no GCS?
-        if any_blob(settings.gcs_bucket_tomados, gcs_prefix):
+
+        # 1) Já existe saída válida no GCS? (GERAL.txt ou TOMADOS*.txt)
+        if any_blob(settings.gcs_bucket_tomados, f"{gcs_prefix}/GERAL.txt") or \
+           any_blob(settings.gcs_bucket_tomados, f"{gcs_prefix}/TOMADOS"):
             set_tomados_concluido(os_id)
-            log.info("[%s] Reconciliação: já existe no GCS ⇒ Concluído.", empresa_pasta.name)
+            log.info("[%s] Reconciliação: saída válida já no GCS ⇒ Concluído.", empresa_pasta.name)
             continue
 
-        # 2) sem GCS; há .txt local para reenvio?
-        txts = list(empresa_pasta.glob("*.txt"))
-        if txts:
-            enviados = upload_txt_dir(empresa_pasta, settings.gcs_bucket_tomados, gcs_prefix)
-            if enviados > 0:
-                set_tomados_concluido(os_id)
-                log.info("[%s] Reconciliação: reenviou %d .txt ⇒ Concluído.", empresa_pasta.name, enviados)
-                continue
+        # 2) Sem GCS; existe saída válida local?
+        enviados_tomados = upload_permitidos(empresa_pasta, settings.gcs_bucket_tomados, gcs_prefix)
+        # Se subimos GERAL e/ou TOMADOS*.txt, concluímos. (não depende de arquivos “genéricos”)
+        if (empresa_pasta / "GERAL.txt").exists() or enviados_tomados > 0:
+            set_tomados_concluido(os_id)
+            log.info("[%s] Reconciliação: reenviou saída válida (TOMADOS=%d) ⇒ Concluído.",
+                     empresa_pasta.name, enviados_tomados)
+            continue
 
-        log.info("[%s] Reconciliação: sem saída no GCS e sem .txt local — sem ação.", empresa_pasta.name)
+        # 3) Ainda sem saída válida; tentar processar se houver PDFs
+        tomados_dir = empresa_pasta / "TOMADOS"
+        if tomados_dir.exists() and any(tomados_dir.glob("*.pdf")):
+            log.info("[%s] Reconciliação: PDFs encontrados; processando...", empresa_pasta.name)
+            try:
+                processar_empresa(empresa_pasta)
+                # após processar, conferir novamente no GCS por GERAL/TOMADOS
+                if any_blob(settings.gcs_bucket_tomados, f"{gcs_prefix}/GERAL.txt") or \
+                   any_blob(settings.gcs_bucket_tomados, f"{gcs_prefix}/TOMADOS"):
+                    set_tomados_concluido(os_id)
+                    log.info("[%s] Reconciliação: processado e enviado ⇒ Concluído.", empresa_pasta.name)
+                else:
+                    log.warning("[%s] Reconciliação: processou mas não encontrou GERAL/TOMADOS no GCS.",
+                                empresa_pasta.name)
+                continue
+            except Exception as e:
+                log.error("[%s] Reconciliação: falha no processamento: %s",
+                          empresa_pasta.name, e, exc_info=True)
+
+        log.info("[%s] Reconciliação: sem saída válida e sem PDFs — sem ação.",
+                 empresa_pasta.name)
 
 
 def main():
