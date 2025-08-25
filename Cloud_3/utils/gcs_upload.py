@@ -17,15 +17,29 @@ def upload_file(local_path: Path, bucket: str, blob_name: str) -> str:
 
 
 def any_blob(bucket: str, prefix: str) -> bool:
+    """
+        Retorna True se existir pelo menos 1 objeto com ESTE PREFIXO.
+        Use:
+          - any_blob(bucket, f"{prefix}/GERAL.txt")   -> checa GERAL.txt (quase-exato)
+          - any_blob(bucket, f"{prefix}/TOMADOS")     -> checa TOMADOS*.txt
+    """
     return any(True for _ in _storage.bucket(bucket).list_blobs(prefix=prefix, max_results=1))
 
 
-def upload_txt_dir(local_dir: Path, bucket: str, dest_prefix: str) -> int:
-    if not dest_prefix.endswith("/"):
-        dest_prefix += "/"
-    count = 0
-    for txt in local_dir.glob("*.txt"):
-        upload_file(txt, bucket, dest_prefix + txt.name)
-        count += 1
-    _log.info("Upload dir → %s arquivo(s) de %s para gs://%s/%s", count, local_dir, bucket, dest_prefix)
-    return count
+def upload_permitidos(empresa_pasta: Path, bucket: str, gcs_prefix: str) -> int:
+    """
+    Envia apenas GERAL.txt e TOMADOS*.txt. Retorna quantos TOMADOS*.txt foram enviados.
+    """
+    enviados_tomados = 0
+
+    # Envia GERAL.txt se existir
+    geral = empresa_pasta / "GERAL.txt"
+    if geral.exists():
+        upload_file(geral, bucket, f"{gcs_prefix}/{geral.name}")
+
+    # Envia apenas TOMADOS*.txt
+    for p in empresa_pasta.glob("TOMADOS*.txt"):
+        upload_file(p, bucket, f"{gcs_prefix}/{p.name}")
+        enviados_tomados += 1
+
+    return enviados_tomados
