@@ -113,8 +113,9 @@ Dúvidas, sugestões ou bugs: **renata.boppre@gmail.com**
 
 ---
 
-## 🛡️ Licença
+## 👩‍💻 Autor
 
-MIT © Renata Boppré Scharf
+Renata Boppre Scharf
+
 
 ---
